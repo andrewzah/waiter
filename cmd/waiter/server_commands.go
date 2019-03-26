@@ -8,9 +8,9 @@ import (
 
 	"github.com/sauerbraten/waiter/internal/game"
 	"github.com/sauerbraten/waiter/pkg/definitions/mastermode"
-	"github.com/sauerbraten/waiter/pkg/definitions/nmc"
 	"github.com/sauerbraten/waiter/pkg/definitions/role"
 	"github.com/sauerbraten/waiter/pkg/protocol/cubecode"
+	"github.com/sauerbraten/waiter/pkg/protocol/nmc"
 )
 
 func (s *Server) HandleCommand(c *Client, msg string) {

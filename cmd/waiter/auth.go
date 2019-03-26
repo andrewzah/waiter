@@ -5,9 +5,9 @@ import (
 	"log"
 
 	"github.com/sauerbraten/waiter/internal/utils"
-	"github.com/sauerbraten/waiter/pkg/definitions/nmc"
 	"github.com/sauerbraten/waiter/pkg/definitions/role"
 	"github.com/sauerbraten/waiter/pkg/protocol/cubecode"
+	"github.com/sauerbraten/waiter/pkg/protocol/nmc"
 )
 
 func (s *Server) handleAuthRequest(client *Client, domain string, name string, onSuccess func(role.ID), onFailure func(error)) {

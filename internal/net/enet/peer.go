@@ -13,7 +13,7 @@ import (
 	"unsafe"
 
 	"github.com/sauerbraten/waiter/pkg/definitions/disconnectreason"
-	"github.com/sauerbraten/waiter/pkg/definitions/nmc"
+	"github.com/sauerbraten/waiter/pkg/protocol/nmc"
 )
 
 type PeerState uint
