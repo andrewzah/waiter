@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"fmt"
@@ -13,7 +13,7 @@ func (s *Server) handleAuthRequest(client *Client, domain string, name string, o
 	sessionID := client.SessionID
 
 	_onSuccess := func(rol role.ID) {
-		callbacks <- func() {
+		s.callbacks <- func() {
 			if client.SessionID != sessionID {
 				return
 			}
@@ -28,7 +28,7 @@ func (s *Server) handleAuthRequest(client *Client, domain string, name string, o
 	}
 
 	_onFailure := func(err error) {
-		callbacks <- func() {
+		s.callbacks <- func() {
 			if client.SessionID != sessionID {
 				return
 			}
@@ -42,11 +42,11 @@ func (s *Server) handleAuthRequest(client *Client, domain string, name string, o
 		}
 	}
 
-	s.AuthManager.TryAuthentication(
+	s.authManager.TryAuthentication(
 		domain,
 		name,
 		func(reqID uint32, chal string) {
-			callbacks <- func() {
+			s.callbacks <- func() {
 				if client.SessionID != sessionID {
 					return
 				}
@@ -60,7 +60,7 @@ func (s *Server) handleAuthRequest(client *Client, domain string, name string, o
 }
 
 func (s *Server) handleAuthAnswer(client *Client, domain string, reqID uint32, answ string) {
-	s.AuthManager.CheckAnswer(reqID, domain, answ)
+	s.authManager.CheckAnswer(reqID, domain, answ)
 }
 
 func (s *Server) setAuthRole(client *Client, rol role.ID, domain, name string) {
@@ -70,19 +70,19 @@ func (s *Server) setAuthRole(client *Client, rol role.ID, domain, name string) {
 	}
 
 	if client.Role >= rol {
-		msg := fmt.Sprintf("%s authenticated as %s", s.Clients.UniqueName(client), authUser)
-		s.Clients.Broadcast(nmc.ServerMessage, msg)
+		msg := fmt.Sprintf("%s authenticated as %s", s.clients.UniqueName(client), authUser)
+		s.clients.Broadcast(nmc.ServerMessage, msg)
 		log.Println(cubecode.SanitizeString(msg))
 	} else {
-		msg := fmt.Sprintf("%s claimed %s privileges as %s", s.Clients.UniqueName(client), rol, authUser)
-		s.Clients.Broadcast(nmc.ServerMessage, msg)
+		msg := fmt.Sprintf("%s claimed %s privileges as %s", s.clients.UniqueName(client), rol, authUser)
+		s.clients.Broadcast(nmc.ServerMessage, msg)
 		log.Println(cubecode.SanitizeString(msg))
 		s._setRole(client, rol)
 	}
 }
 
 func (s *Server) setRole(client *Client, targetCN uint32, rol role.ID) {
-	target := s.Clients.GetClientByCN(targetCN)
+	target := s.clients.clientByCN(targetCN)
 	if target == nil {
 		client.Send(nmc.ServerMessage, cubecode.Fail(fmt.Sprintf("no client with CN %d", targetCN)))
 		return
@@ -98,14 +98,14 @@ func (s *Server) setRole(client *Client, targetCN uint32, rol role.ID) {
 	var msg string
 	if rol == role.None {
 		if client == target {
-			msg = fmt.Sprintf("%s relinquished %s privileges", s.Clients.UniqueName(client), target.Role)
+			msg = fmt.Sprintf("%s relinquished %s privileges", s.clients.UniqueName(client), target.Role)
 		} else {
-			msg = fmt.Sprintf("%s took away %s privileges from %s", s.Clients.UniqueName(client), target.Role, s.Clients.UniqueName(target))
+			msg = fmt.Sprintf("%s took away %s privileges from %s", s.clients.UniqueName(client), target.Role, s.clients.UniqueName(target))
 		}
 	} else {
-		msg = fmt.Sprintf("%s gave %s privileges to %s", s.Clients.UniqueName(client), rol, s.Clients.UniqueName(target))
+		msg = fmt.Sprintf("%s gave %s privileges to %s", s.clients.UniqueName(client), rol, s.clients.UniqueName(target))
 	}
-	s.Clients.Broadcast(nmc.ServerMessage, msg)
+	s.clients.Broadcast(nmc.ServerMessage, msg)
 	log.Println(cubecode.SanitizeString(msg))
 
 	s._setRole(target, rol)
@@ -113,6 +113,6 @@ func (s *Server) setRole(client *Client, targetCN uint32, rol role.ID) {
 
 func (s *Server) _setRole(client *Client, rol role.ID) {
 	client.Role = rol
-	typ, pup, _ := s.Clients.PrivilegedUsersPacket()
-	s.Clients.Broadcast(typ, pup)
+	typ, pup, _ := s.privilegedUsersPacket()
+	s.clients.Broadcast(typ, pup)
 }

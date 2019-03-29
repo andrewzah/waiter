@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"fmt"
@@ -150,7 +150,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				log.Println("could not read auth name from join packet:", p)
 				return
 			}
-			s.TryJoin(client, name, playerModel, authDomain, authName)
+			s.tryJoin(client, name, playerModel, authDomain, authName)
 
 		case nmc.AuthTry:
 			// client wants us to send him a challenge
@@ -191,7 +191,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				log.Println("could not read reason from auth kick packet:", p)
 				return
 			}
-			victim := s.Clients.GetClientByCN(cn)
+			victim := s.clients.clientByCN(cn)
 			if victim == nil {
 				return
 			}
@@ -204,7 +204,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				}
 			}
 			go s.handleAuthRequest(client, domain, name,
-				func(role.ID) { s.AuthKick(client, role.Auth, domain, name, victim, reason) },
+				func(role.ID) { s.authKick(client, role.Auth, domain, name, victim, reason) },
 				onAuthFail,
 			)
 
@@ -266,11 +266,11 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				log.Println("could not read reason from kick packet:", p)
 				return
 			}
-			victim := s.Clients.GetClientByCN(cn)
+			victim := s.clients.clientByCN(cn)
 			if victim == nil {
 				return
 			}
-			s.Kick(client, victim, reason)
+			s.kick(client, victim, reason)
 
 		case nmc.MasterMode:
 			log.Println(p)
@@ -280,7 +280,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				return
 			}
 			mm := mastermode.ID(_mm)
-			s.SetMasterMode(client, mm)
+			s.setMasterMode(client, mm)
 
 		case nmc.Spectator:
 			_spectator, ok := p.GetInt()
@@ -288,7 +288,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				log.Println("could not read CN from spectator packet:", p)
 				return
 			}
-			spectator := s.Clients.GetClientByCN(uint32(_spectator))
+			spectator := s.clients.clientByCN(uint32(_spectator))
 			if spectator == nil {
 				return
 			}
@@ -304,7 +304,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 					return
 				}
 				// unprivileged clients can not unspec themselves in mm>=2
-				if client.State == playerstate.Spectator && s.MasterMode >= mastermode.Locked {
+				if client.State == playerstate.Spectator && s.masterMode >= mastermode.Locked {
 					client.Send(nmc.ServerMessage, cubecode.Fail("you can't do that"))
 					return
 				}
@@ -315,16 +315,16 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 			}
 			if toggle != 0 {
 				if client.State == playerstate.Alive {
-					s.GameMode.HandleFrag(&spectator.Player, &spectator.Player)
+					s.gameMode.HandleFrag(&spectator.Player, &spectator.Player)
 				}
-				s.GameMode.Leave(&spectator.Player)
+				s.gameMode.Leave(&spectator.Player)
 				spectator.State = playerstate.Spectator
 			} else {
 				spectator.State = playerstate.Dead
-				s.GameMode.Join(&spectator.Player)
+				s.gameMode.Join(&spectator.Player)
 				// todo: checkmap
 			}
-			s.Clients.Broadcast(nmc.Spectator, spectator.CN, toggle)
+			s.Broadcast(nmc.Spectator, spectator.CN, toggle)
 
 		case nmc.VoteMap:
 			mapname, ok := p.GetString()
@@ -333,7 +333,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				return
 			}
 			if mapname == "" {
-				mapname = s.Map
+				mapname = s.mapname
 			}
 
 			_modeID, ok := p.GetInt()
@@ -349,7 +349,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				return
 			}
 
-			if s.MasterMode < mastermode.Veto {
+			if s.masterMode < mastermode.Veto {
 				client.Send(nmc.ServerMessage, cubecode.Fail("this server does not support map voting"))
 				return
 			}
@@ -360,7 +360,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 			}
 
 			log.Println(client, "forced", modeID, "on", mapname)
-			s.ChangeMap(modeID, mapname)
+			s.changeMap(modeID, mapname)
 
 		case nmc.Ping:
 			// client pinging server → send pong
@@ -389,7 +389,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				return
 			}
 			if strings.HasPrefix(msg, "#") {
-				s.Commands.Handle(client, msg[1:])
+				s.commands.Handle(client, msg[1:])
 			} else {
 				client.Packets.Publish(nmc.ChatMessage, msg)
 			}
@@ -401,7 +401,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				log.Println("could not read message from team chat message packet:", p)
 				return
 			}
-			s.Clients.SendToTeam(client, nmc.TeamChatMessage, client.CN, msg)
+			s.clients.SendToTeam(client, nmc.TeamChatMessage, client.CN, msg)
 
 		case nmc.ChangeName:
 			newName, ok := p.GetString()
@@ -428,7 +428,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				return
 			}
 
-			teamMode, ok := s.GameMode.(game.TeamMode)
+			teamMode, ok := s.gameMode.(game.TeamMode)
 			if !ok {
 				return
 			}
@@ -441,7 +441,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				log.Println("could not read player CN from set team packet:", p)
 				return
 			}
-			victim := s.Clients.GetClientByCN(uint32(_victim))
+			victim := s.clients.clientByCN(uint32(_victim))
 
 			teamName, ok := readTeamName(&p)
 			if !ok {
@@ -453,7 +453,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				return
 			}
 
-			teamMode, ok := s.GameMode.(game.TeamMode)
+			teamMode, ok := s.gameMode.(game.TeamMode)
 			if !ok {
 				return
 			}
@@ -470,7 +470,7 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 			log.Println("todo: MAPCRC")
 
 		case nmc.TrySpawn:
-			if !client.Joined || client.State != playerstate.Dead || !client.LastSpawnAttempt.IsZero() || !s.GameMode.CanSpawn(&client.Player) {
+			if !client.Joined || client.State != playerstate.Dead || !client.LastSpawnAttempt.IsZero() || !s.gameMode.CanSpawn(&client.Player) {
 				return
 			}
 			s.Spawn(client)
@@ -508,17 +508,17 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 			if !ok {
 				return
 			}
-			s.HandleShoot(client, wpn, id, from, to, hits)
+			s.handleShoot(client, wpn, id, from, to, hits)
 
 		case nmc.Explode:
 			millis, wpn, id, hits, ok := parseExplode(client, &p)
 			if !ok {
 				return
 			}
-			s.HandleExplode(client, millis, wpn, id, hits)
+			s.handleExplode(client, millis, wpn, id, hits)
 
 		case nmc.Suicide:
-			s.GameMode.HandleFrag(&client.Player, &client.Player)
+			s.gameMode.HandleFrag(&client.Player, &client.Player)
 
 		case nmc.Sound:
 			sound, ok := p.GetInt()
@@ -534,12 +534,12 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				log.Println("could not read pause toggle from pause packet:", p)
 				return
 			}
-			if s.MasterMode < mastermode.Locked {
+			if s.masterMode < mastermode.Locked {
 				if client.Role == role.None {
 					return
 				}
 			}
-			timedMode, isTimedMode := s.GameMode.(game.TimedMode)
+			timedMode, isTimedMode := s.gameMode.(game.TimedMode)
 			if !isTimedMode {
 				return
 			}
@@ -558,10 +558,10 @@ func (s *Server) handlePacket(client *Client, channelID uint8, p protocol.Packet
 				log.Println("could not read command from server command packet:", p)
 				return
 			}
-			s.Commands.Handle(client, cmd)
+			s.commands.Handle(client, cmd)
 
 		default:
-			ok := s.GameMode.HandlePacket(&client.Player, packetType, &p)
+			ok := s.gameMode.HandlePacket(&client.Player, packetType, &p)
 			if !ok {
 				log.Println("received", packetType, p, "on channel", channelID)
 				return

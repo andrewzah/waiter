@@ -1,10 +1,13 @@
-package main
+package info
 
 import (
 	"log"
 	"net"
-	"strconv"
 	"time"
+
+	"github.com/sauerbraten/waiter/pkg/protocol/role"
+
+	"github.com/sauerbraten/waiter/pkg/protocol/mastermode"
 
 	"github.com/sauerbraten/waiter/internal/net/packet"
 	"github.com/sauerbraten/waiter/pkg/game"
@@ -35,18 +38,38 @@ const (
 	ServerMod int32 = -9
 )
 
-type infoRequest struct {
+type ServerState interface {
+	MasterMode() mastermode.ID
+	GameMode() game.Mode
+	Map() string
+}
+
+type Server interface {
+	ServerState
+	NumPlayers() int
+	MaxPlayers() int
+	Player(cn uint32) game.Player
+	AllPlayers() []game.Player
+	Ping(cn uint32) int32
+	Role(cn uint32) role.ID
+	IP(cn uint32) net.IP
+}
+
+type Request struct {
 	raddr   *net.UDPAddr
 	payload []byte
 }
 
-type infoServer struct {
-	s    *Server
-	conn *net.UDPConn
+type InfoServer struct {
+	serverDescription       string
+	upSince                 time.Time
+	server                  Server
+	sendClientIPsViaExtinfo bool
+	conn                    *net.UDPConn
 }
 
-func (s *Server) StartListeningForInfoRequests() (*infoServer, <-chan infoRequest) {
-	laddr, err := net.ResolveUDPAddr("udp", s.ListenAddress+":"+strconv.Itoa(s.ListenPort+1))
+func NewInfoServer(addr, description string, sendClientIPsViaExtinfo bool, server Server) (*InfoServer, <-chan Request) {
+	laddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		log.Println(err)
 		return nil, nil
@@ -58,7 +81,7 @@ func (s *Server) StartListeningForInfoRequests() (*infoServer, <-chan infoReques
 		return nil, nil
 	}
 
-	inc := make(chan infoRequest)
+	inc := make(chan Request)
 
 	go func() {
 		for {
@@ -68,7 +91,7 @@ func (s *Server) StartListeningForInfoRequests() (*infoServer, <-chan infoReques
 				log.Println(err)
 				continue
 			}
-			inc <- infoRequest{
+			inc <- Request{
 				raddr:   raddr,
 				payload: pkt[:n],
 			}
@@ -77,13 +100,16 @@ func (s *Server) StartListeningForInfoRequests() (*infoServer, <-chan infoReques
 
 	log.Println("listening for info requests on", laddr.String())
 
-	return &infoServer{
-		s:    s,
-		conn: conn,
+	return &InfoServer{
+		serverDescription:       description,
+		upSince:                 time.Now(),
+		server:                  server,
+		sendClientIPsViaExtinfo: sendClientIPsViaExtinfo,
+		conn:                    conn,
 	}, inc
 }
 
-func (i *infoServer) Handle(req infoRequest) {
+func (i *InfoServer) Handle(req Request) {
 	// prepare response header (we need to replay the request)
 	respHeader := req.payload
 
@@ -105,25 +131,25 @@ func (i *infoServer) Handle(req infoRequest) {
 		}
 		switch extReqType {
 		case ExtInfoTypeUptime:
-			i.send(req.raddr, i.s.uptime(respHeader))
+			i.send(req.raddr, i.uptime(respHeader))
 		case ExtInfoTypeClientInfo:
 			cn, ok := p.GetInt()
 			if !ok {
 				log.Println("malformed info request: could not read CN from client info request:", p)
 				return
 			}
-			i.send(req.raddr, s.clientInfo(cn, respHeader)...)
+			i.send(req.raddr, i.clientInfo(cn, respHeader)...)
 		case ExtInfoTypeTeamScores:
-			i.send(req.raddr, s.teamScores(respHeader))
+			i.send(req.raddr, i.teamScores(respHeader))
 		default:
 			log.Println("erroneous extinfo type queried:", reqType)
 		}
 	default:
-		i.send(req.raddr, s.basicInfo(respHeader))
+		i.send(req.raddr, i.basicInfo(respHeader))
 	}
 }
 
-func (i *infoServer) send(raddr *net.UDPAddr, packets ...protocol.Packet) {
+func (i *InfoServer) send(raddr *net.UDPAddr, packets ...protocol.Packet) {
 	for _, p := range packets {
 		n, err := i.conn.WriteToUDP(p, raddr)
 		if err != nil {
@@ -136,13 +162,13 @@ func (i *infoServer) send(raddr *net.UDPAddr, packets ...protocol.Packet) {
 	}
 }
 
-func (s *Server) basicInfo(respHeader []byte) protocol.Packet {
+func (i *InfoServer) basicInfo(respHeader []byte) protocol.Packet {
 	q := []interface{}{
 		respHeader,
-		s.NumClients(),
+		i.server.NumPlayers(),
 	}
 
-	timedMode, isTimedMode := s.GameMode.(game.TimedMode)
+	timedMode, isTimedMode := i.server.GameMode().(game.TimedMode)
 	timeLeft, paused := 0*time.Second, false
 	if isTimedMode {
 		timeLeft = timedMode.TimeLeft()
@@ -157,30 +183,30 @@ func (s *Server) basicInfo(respHeader []byte) protocol.Packet {
 
 	q = append(q,
 		protocol.Version,
-		s.GameMode.ID(),
+		i.server.GameMode().ID(),
 		timeLeft,
-		s.MaxClients,
-		s.MasterMode,
+		i.server.MaxPlayers(),
+		i.server.MasterMode(),
 	)
 
 	if paused {
 		q = append(q,
-			paused, // paused?
-			100,    // gamespeed
+			paused,
+			100, // gamespeed
 		)
 	}
 
-	q = append(q, s.Map, s.ServerDescription)
+	q = append(q, i.server.Map(), i.serverDescription)
 
 	return packet.Encode(q...)
 }
 
-func (s *Server) uptime(respHeader []byte) protocol.Packet {
+func (i *InfoServer) uptime(respHeader []byte) protocol.Packet {
 	q := []interface{}{
 		respHeader,
 		ExtInfoACK,
 		ExtInfoVersion,
-		int32(time.Since(s.UpSince) / time.Second),
+		int32(time.Since(i.upSince) / time.Second),
 	}
 
 	if len(respHeader) > 2 {
@@ -190,14 +216,14 @@ func (s *Server) uptime(respHeader []byte) protocol.Packet {
 	return packet.Encode(q...)
 }
 
-func (s *Server) clientInfo(cn int32, respHeader []byte) (packets []protocol.Packet) {
+func (i *InfoServer) clientInfo(cn int32, respHeader []byte) (packets []protocol.Packet) {
 	q := []interface{}{
 		respHeader,
 		ExtInfoACK,
 		ExtInfoVersion,
 	}
 
-	if cn < -1 || int(cn) > s.NumClients() {
+	if cn < -1 || int(cn) > i.server.NumPlayers() {
 		q = append(q, ExtInfoError)
 		packets = append(packets, packet.Encode(q...))
 		return
@@ -210,7 +236,9 @@ func (s *Server) clientInfo(cn int32, respHeader []byte) (packets []protocol.Pac
 	q = append(q, ClientInfoResponseTypeCNs)
 
 	if cn == -1 {
-		s.Clients.ForEach(func(c *Client) { q = append(q, c.CN) })
+		for _, player := range i.server.AllPlayers() {
+			q = append(q, player.CN)
+		}
 	} else {
 		q = append(q, cn)
 	}
@@ -218,12 +246,12 @@ func (s *Server) clientInfo(cn int32, respHeader []byte) (packets []protocol.Pac
 	packets = append(packets, packet.Encode(q...))
 
 	if cn == -1 {
-		s.Clients.ForEach(func(c *Client) {
-			packets = append(packets, s.clientPacket(c, header))
-		})
+		for _, player := range i.server.AllPlayers() {
+			packets = append(packets, i.clientPacket(player, header))
+		}
 	} else {
-		c := s.Clients.GetClientByCN(uint32(cn))
-		packets = append(packets, s.clientPacket(c, header))
+		player := i.server.Player(uint32(cn))
+		packets = append(packets, i.clientPacket(player, header))
 	}
 
 	return
@@ -236,29 +264,29 @@ func max(i, j int32) int32 {
 	return j
 }
 
-func (s *Server) clientPacket(c *Client, header []interface{}) protocol.Packet {
+func (i *InfoServer) clientPacket(p game.Player, header []interface{}) protocol.Packet {
 	q := header
 
 	q = append(q,
 		ClientInfoResponseTypeInfo,
-		c.CN,
-		c.Ping,
-		c.Name,
-		c.Team.Name,
-		c.Frags,
-		c.Flags,
-		c.Deaths,
-		c.Teamkills,
-		c.Damage*100/max(c.DamagePotential, 1),
-		c.Health,
-		c.Armour,
-		c.SelectedWeapon.ID,
-		c.Role,
-		c.State,
+		p.CN,
+		i.server.Ping(p.CN),
+		p.Name,
+		p.Team.Name,
+		p.Frags,
+		p.Flags,
+		p.Deaths,
+		p.Teamkills,
+		p.Damage*100/max(p.DamagePotential, 1),
+		p.Health,
+		p.Armour,
+		p.SelectedWeapon.ID,
+		i.server.Role(p.CN),
+		p.State,
 	)
 
-	if s.SendClientIPsViaExtinfo {
-		q = append(q, []byte(c.Peer.Address.IP.To4()[:3]))
+	if i.sendClientIPsViaExtinfo {
+		q = append(q, []byte(i.server.IP(p.CN).To4()[:3]))
 	} else {
 		q = append(q, 0, 0, 0)
 	}
@@ -266,27 +294,27 @@ func (s *Server) clientPacket(c *Client, header []interface{}) protocol.Packet {
 	return packet.Encode(q...)
 }
 
-func (s *Server) teamScores(respHeader []byte) protocol.Packet {
+func (i *InfoServer) teamScores(respHeader []byte) protocol.Packet {
 	q := []interface{}{
 		respHeader,
 		ExtInfoACK,
 		ExtInfoVersion,
 	}
 
-	teamMode, isTeamMode := s.GameMode.(game.TeamMode)
+	teamMode, isTeamMode := i.server.GameMode().(game.TeamMode)
 	if isTeamMode {
 		q = append(q, ExtInfoNoError)
 	} else {
 		q = append(q, ExtInfoError)
 	}
 
-	timedMode, isTimedMode := s.GameMode.(game.TimedMode)
+	timedMode, isTimedMode := i.server.GameMode().(game.TimedMode)
 	timeLeft := 0 * time.Second
 	if isTimedMode {
 		timeLeft = timedMode.TimeLeft()
 	}
 
-	q = append(q, s.GameMode.ID(), timeLeft)
+	q = append(q, i.server.GameMode().ID(), timeLeft)
 
 	if !isTeamMode {
 		return packet.Encode(q...)

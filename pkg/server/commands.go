@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"fmt"
@@ -13,26 +13,28 @@ import (
 	"github.com/sauerbraten/waiter/pkg/protocol/role"
 )
 
-type ServerCommand struct {
+type Command struct {
 	name       string
 	aliases    []string
 	argsFormat string
 	minRole    role.ID
-	f          func(caller *Client, args []string)
+	f          func(s *Server, c *Client, args []string)
 }
 
-func (cmd *ServerCommand) String() string {
+func (cmd *Command) String() string {
 	return fmt.Sprintf("%s %s (aka %s)", cubecode.Green(cmd.name), cmd.argsFormat, strings.Join(cmd.aliases, ", "))
 }
 
-type ServerCommands struct {
-	byAlias map[string]*ServerCommand
-	cmds    []*ServerCommand
+type Commands struct {
+	s       *Server
+	byAlias map[string]*Command
+	cmds    []*Command
 }
 
-func NewServerCommands(cmds ...*ServerCommand) *ServerCommands {
-	sc := &ServerCommands{
-		byAlias: map[string]*ServerCommand{},
+func NewCommands(s *Server, cmds ...*Command) *Commands {
+	sc := &Commands{
+		s:       s,
+		byAlias: map[string]*Command{},
 	}
 	for _, cmd := range cmds {
 		sc.Register(cmd)
@@ -40,7 +42,7 @@ func NewServerCommands(cmds ...*ServerCommand) *ServerCommands {
 	return sc
 }
 
-func (sc *ServerCommands) Register(cmd *ServerCommand) {
+func (sc *Commands) Register(cmd *Command) {
 	sc.byAlias[cmd.name] = cmd
 	for _, alias := range cmd.aliases {
 		sc.byAlias[alias] = cmd
@@ -48,7 +50,7 @@ func (sc *ServerCommands) Register(cmd *ServerCommand) {
 	sc.cmds = append(sc.cmds, cmd)
 }
 
-func (sc *ServerCommands) Help(c *Client) {
+func (sc *Commands) Help(c *Client) {
 	helpLines := []string{}
 	for _, cmd := range sc.cmds {
 		if c.Role >= cmd.minRole {
@@ -58,7 +60,7 @@ func (sc *ServerCommands) Help(c *Client) {
 	c.Send(nmc.ServerMessage, "available commands: "+strings.Join(helpLines, ", "))
 }
 
-func (sc *ServerCommands) Handle(c *Client, msg string) {
+func (sc *Commands) Handle(c *Client, msg string) {
 	parts := strings.Split(strings.TrimSpace(msg), " ")
 	commandName, args := parts[0], parts[1:]
 
@@ -77,23 +79,23 @@ func (sc *ServerCommands) Handle(c *Client, msg string) {
 			return
 		}
 
-		cmd.f(c, args)
+		cmd.f(sc.s, c, args)
 	}
 }
 
-var queueMap = &ServerCommand{
+var queueMap = &Command{
 	name:       "queue",
 	aliases:    []string{"queued", "queuemap", "queuedmap", "queuemaps", "queuedmaps", "mapqueue", "mapsqueue"},
 	argsFormat: "[map...]",
 	minRole:    role.Master,
-	f: func(c *Client, args []string) {
-		for _, mapp := range args {
-			err := s.MapRotation.QueueMap(s.GameMode.ID(), mapp)
+	f: func(s *Server, c *Client, args []string) {
+		for _, mapname := range args {
+			err := s.mapRotation.QueueMap(s.gameMode.ID(), mapname)
 			if err != "" {
 				c.Send(nmc.ServerMessage, cubecode.Fail(err))
 			}
 		}
-		queuedMaps := s.MapRotation.QueuedMaps()
+		queuedMaps := s.mapRotation.QueuedMaps()
 		switch len(queuedMaps) {
 		case 0:
 			c.Send(nmc.ServerMessage, "no maps queued")
@@ -105,29 +107,29 @@ var queueMap = &ServerCommand{
 	},
 }
 
-var toggleKeepTeams = &ServerCommand{
+var toggleKeepTeams = &Command{
 	name:       "keepteams",
 	aliases:    []string{"persist", "persistteams"},
 	argsFormat: "0|1",
 	minRole:    role.Master,
-	f: func(c *Client, args []string) {
+	f: func(s *Server, c *Client, args []string) {
 		changed := false
 		if len(args) >= 1 {
 			val, err := strconv.Atoi(args[0])
 			if err != nil || (val != 0 && val != 1) {
 				return
 			}
-			changed = s.KeepTeams != (val == 1)
-			s.KeepTeams = val == 1
+			changed = s.keepTeams != (val == 1)
+			s.keepTeams = val == 1
 		}
 		if changed {
-			if s.KeepTeams {
-				s.Clients.Broadcast(nmc.ServerMessage, "teams will be kept")
+			if s.keepTeams {
+				s.clients.Broadcast(nmc.ServerMessage, "teams will be kept")
 			} else {
-				s.Clients.Broadcast(nmc.ServerMessage, "teams will be shuffled")
+				s.clients.Broadcast(nmc.ServerMessage, "teams will be shuffled")
 			}
 		} else {
-			if s.KeepTeams {
+			if s.keepTeams {
 				c.Send(nmc.ServerMessage, "teams will be kept")
 			} else {
 				c.Send(nmc.ServerMessage, "teams will be shuffled")
@@ -136,42 +138,42 @@ var toggleKeepTeams = &ServerCommand{
 	},
 }
 
-var toggleCompetitiveMode = &ServerCommand{
+var toggleCompetitiveMode = &Command{
 	name:       "comp",
 	aliases:    []string{"competitive"},
 	argsFormat: "0|1",
 	minRole:    role.Master,
-	f: func(c *Client, args []string) {
+	f: func(s *Server, c *Client, args []string) {
 		changed := false
 		if len(args) >= 1 {
 			val, err := strconv.Atoi(args[0])
 			if err != nil || (val != 0 && val != 1) {
 				return
 			}
-			comp, active := s.GameMode.(*game.Competitive)
-			changed = s.CompetitiveMode != (val == 1)
+			comp, active := s.gameMode.(*game.Competitive)
+			changed = s.competitiveMode != (val == 1)
 			switch val {
 			case 1:
 				// starts at next map
-				s.CompetitiveMode = true
+				s.competitiveMode = true
 				// but lock server now
-				s.SetMasterMode(c, mastermode.Locked)
+				s.setMasterMode(c, mastermode.Locked)
 			default:
 				if active {
 					// stops immediately
-					s.GameMode = comp.ToCasual()
-					s.CompetitiveMode = false
+					s.gameMode = comp.ToCasual()
+					s.competitiveMode = false
 				}
 			}
 		}
 		if changed {
-			if s.CompetitiveMode {
-				s.Clients.Broadcast(nmc.ServerMessage, "competitive mode will be enabled with next game")
+			if s.competitiveMode {
+				s.clients.Broadcast(nmc.ServerMessage, "competitive mode will be enabled with next game")
 			} else {
-				s.Clients.Broadcast(nmc.ServerMessage, "competitive mode disabled")
+				s.clients.Broadcast(nmc.ServerMessage, "competitive mode disabled")
 			}
 		} else {
-			if s.CompetitiveMode {
+			if s.competitiveMode {
 				c.Send(nmc.ServerMessage, "competitive mode is on")
 			} else {
 				c.Send(nmc.ServerMessage, "competitive mode is off")
@@ -180,29 +182,29 @@ var toggleCompetitiveMode = &ServerCommand{
 	},
 }
 
-var toggleReportStats = &ServerCommand{
+var toggleReportStats = &Command{
 	name:       "repstats",
 	aliases:    []string{"reportstats"},
 	argsFormat: "0|1",
 	minRole:    role.Admin,
-	f: func(c *Client, args []string) {
+	f: func(s *Server, c *Client, args []string) {
 		changed := false
 		if len(args) >= 1 {
 			val, err := strconv.Atoi(args[0])
 			if err != nil || (val != 0 && val != 1) {
 				return
 			}
-			changed = s.ReportStats != (val == 1)
-			s.ReportStats = val == 1
+			changed = s.reportStats != (val == 1)
+			s.reportStats = val == 1
 		}
 		if changed {
-			if s.ReportStats {
-				s.Clients.Broadcast(nmc.ServerMessage, "stats will be reported at intermission")
+			if s.reportStats {
+				s.clients.Broadcast(nmc.ServerMessage, "stats will be reported at intermission")
 			} else {
-				s.Clients.Broadcast(nmc.ServerMessage, "stats will not be reported")
+				s.clients.Broadcast(nmc.ServerMessage, "stats will not be reported")
 			}
 		} else {
-			if s.ReportStats {
+			if s.reportStats {
 				c.Send(nmc.ServerMessage, "stats reporting is on")
 			} else {
 				c.Send(nmc.ServerMessage, "stats reporting is off")
@@ -211,12 +213,12 @@ var toggleReportStats = &ServerCommand{
 	},
 }
 
-var lookupIPs = &ServerCommand{
+var lookupIPs = &Command{
 	name:       "ip",
 	aliases:    []string{"ips"},
 	argsFormat: "<name|cn>...",
 	minRole:    role.Admin,
-	f: func(c *Client, args []string) {
+	f: func(s *Server, c *Client, args []string) {
 		if len(args) < 1 {
 			return
 		}
@@ -225,14 +227,14 @@ var lookupIPs = &ServerCommand{
 			// try CN
 			cn, err := strconv.Atoi(query)
 			if err == nil {
-				target = s.Clients.GetClientByCN(uint32(cn))
+				target = s.clients.clientByCN(uint32(cn))
 			}
 			if err != nil || target == nil {
-				target = s.Clients.FindClientByName(query)
+				target = s.clients.findClientByName(query)
 			}
 
 			if target != nil {
-				c.Send(nmc.ServerMessage, fmt.Sprintf("%s has IP %s", s.Clients.UniqueName(target), target.Peer.Address.IP))
+				c.Send(nmc.ServerMessage, fmt.Sprintf("%s has IP %s", s.clients.UniqueName(target), target.Peer.Address.IP))
 			} else {
 				c.Send(nmc.ServerMessage, fmt.Sprintf("could not find a client matching '%s'", query))
 			}
@@ -240,17 +242,17 @@ var lookupIPs = &ServerCommand{
 	},
 }
 
-var setTimeLeft = &ServerCommand{
+var setTimeLeft = &Command{
 	name:       "time",
 	aliases:    []string{"settime", "settimeleft", "settimeremaining", "timeleft", "timeremaining"},
 	argsFormat: "[Xm]Ys",
 	minRole:    role.Admin,
-	f: func(c *Client, args []string) {
+	f: func(s *Server, c *Client, args []string) {
 		if len(args) < 1 {
 			return
 		}
 
-		timedMode, isTimedMode := s.GameMode.(game.TimedMode)
+		timedMode, isTimedMode := s.gameMode.(game.TimedMode)
 		if !isTimedMode {
 			c.Send(nmc.ServerMessage, cubecode.Fail("not running a timed mode"))
 			return
@@ -264,23 +266,23 @@ var setTimeLeft = &ServerCommand{
 
 		if d == 0 {
 			d = 1 * time.Second // 0 forces intermission without updating the client's game timer
-			s.Broadcast(nmc.ServerMessage, cubecode.Orange(fmt.Sprintf("%s forced intermission", s.Clients.UniqueName(c))))
+			s.clients.Broadcast(nmc.ServerMessage, cubecode.Orange(fmt.Sprintf("%s forced intermission", s.clients.UniqueName(c))))
 		} else {
-			s.Broadcast(nmc.ServerMessage, cubecode.Orange(fmt.Sprintf("%s set the time remaining to %s", s.Clients.UniqueName(c), d)))
+			s.clients.Broadcast(nmc.ServerMessage, cubecode.Orange(fmt.Sprintf("%s set the time remaining to %s", s.clients.UniqueName(c), d)))
 		}
 
 		timedMode.SetTimeLeft(d)
 	},
 }
 
-var registerPubkey = &ServerCommand{
+var registerPubkey = &Command{
 	name:       "register",
 	aliases:    []string{},
 	argsFormat: "[name] <pubkey>",
 	minRole:    role.None,
-	f: func(c *Client, args []string) {
-		if statsAuth, ok := c.Authentications[s.StatsServerAuthDomain]; ok {
-			c.Send(nmc.ServerMessage, cubecode.Fail("you're already authenticated with "+s.StatsServerAuthDomain+" as "+statsAuth.name))
+	f: func(s *Server, c *Client, args []string) {
+		if statsAuth, ok := c.Authentications[s.config.StatsServerAuthDomain]; ok {
+			c.Send(nmc.ServerMessage, cubecode.Fail("you're already authenticated with "+s.config.StatsServerAuthDomain+" as "+statsAuth.name))
 			return
 		}
 
@@ -306,7 +308,7 @@ var registerPubkey = &ServerCommand{
 			return
 		}
 
-		statsAuth.AddAuth(name, pubkey,
+		s.statsServer.AddAuth(name, pubkey,
 			func(err string) {
 				if err != "" {
 					c.Send(nmc.ServerMessage, cubecode.Error("creating your account failed: "+err))
