@@ -21,8 +21,22 @@ type Command struct {
 	f          func(s *Server, c *Client, args []string)
 }
 
+func NewCommand(name string, aliases []string, argsFormat string, minRole role.ID, f func(s *Server, c *Client, args []string)) *Command {
+	return &Command{
+		name:       name,
+		aliases:    aliases,
+		argsFormat: argsFormat,
+		minRole:    minRole,
+		f:          f,
+	}
+}
+
 func (cmd *Command) String() string {
-	return fmt.Sprintf("%s %s (aka %s)", cubecode.Green(cmd.name), cmd.argsFormat, strings.Join(cmd.aliases, ", "))
+	aka := ""
+	if len(cmd.aliases) > 0 {
+		aka = " " + cubecode.Gray(fmt.Sprintf("(aka %s)", strings.Join(cmd.aliases, ", ")))
+	}
+	return fmt.Sprintf("%s %s", cubecode.Green(cmd.name), cmd.argsFormat) + aka
 }
 
 type Commands struct {
