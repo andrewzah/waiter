@@ -58,7 +58,7 @@ type Server struct {
 	reportStats     bool
 }
 
-func New(config Config, authManager *auth.Manager) (*Server, <-chan func()) {
+func New(config Config, authManager *auth.Manager, cmds ...*Command) (*Server, <-chan func()) {
 	callbacks := make(chan func())
 
 	s := &Server{
@@ -70,7 +70,7 @@ func New(config Config, authManager *auth.Manager) (*Server, <-chan func()) {
 		mapRotation: maprot.NewRotation(config.MapPools),
 		callbacks:   callbacks,
 	}
-	s.commands = NewCommands(s, queueMap, toggleKeepTeams, toggleCompetitiveMode, toggleReportStats, lookupIPs, setTimeLeft, registerPubkey)
+	s.commands = NewCommands(s, cmds...)
 
 	s.State = State{
 		gameMode: s.newGame(config.FallbackGameMode),

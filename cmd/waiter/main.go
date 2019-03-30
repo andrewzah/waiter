@@ -86,7 +86,17 @@ func main() {
 		conf.StatsServerAuthDomain: statsServer,
 	})
 
-	s, callbacks = server.New(*conf, authManager)
+	s, callbacks = server.New(
+		*conf,
+		authManager,
+		server.QueueMap,
+		server.ToggleKeepTeams,
+		server.ToggleCompetitiveMode,
+		server.ToggleReportStats,
+		server.LookupIPs,
+		server.SetTimeLeft,
+		server.RegisterPubkey,
+	)
 
 	is, infoInc = info.NewInfoServer(conf.ListenAddress+":"+strconv.Itoa(conf.ListenPort+1), conf.ServerDescription, conf.SendClientIPsViaExtinfo, s)
 

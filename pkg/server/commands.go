@@ -43,6 +43,9 @@ func NewCommands(s *Server, cmds ...*Command) *Commands {
 }
 
 func (sc *Commands) Register(cmd *Command) {
+	if cmd == nil {
+		return
+	}
 	sc.byAlias[cmd.name] = cmd
 	for _, alias := range cmd.aliases {
 		sc.byAlias[alias] = cmd
@@ -83,7 +86,7 @@ func (sc *Commands) Handle(c *Client, msg string) {
 	}
 }
 
-var queueMap = &Command{
+var QueueMap = &Command{
 	name:       "queue",
 	aliases:    []string{"queued", "queuemap", "queuedmap", "queuemaps", "queuedmaps", "mapqueue", "mapsqueue"},
 	argsFormat: "[map...]",
@@ -107,7 +110,7 @@ var queueMap = &Command{
 	},
 }
 
-var toggleKeepTeams = &Command{
+var ToggleKeepTeams = &Command{
 	name:       "keepteams",
 	aliases:    []string{"persist", "persistteams"},
 	argsFormat: "0|1",
@@ -138,7 +141,7 @@ var toggleKeepTeams = &Command{
 	},
 }
 
-var toggleCompetitiveMode = &Command{
+var ToggleCompetitiveMode = &Command{
 	name:       "comp",
 	aliases:    []string{"competitive"},
 	argsFormat: "0|1",
@@ -182,7 +185,7 @@ var toggleCompetitiveMode = &Command{
 	},
 }
 
-var toggleReportStats = &Command{
+var ToggleReportStats = &Command{
 	name:       "repstats",
 	aliases:    []string{"reportstats"},
 	argsFormat: "0|1",
@@ -213,7 +216,7 @@ var toggleReportStats = &Command{
 	},
 }
 
-var lookupIPs = &Command{
+var LookupIPs = &Command{
 	name:       "ip",
 	aliases:    []string{"ips"},
 	argsFormat: "<name|cn>...",
@@ -242,7 +245,7 @@ var lookupIPs = &Command{
 	},
 }
 
-var setTimeLeft = &Command{
+var SetTimeLeft = &Command{
 	name:       "time",
 	aliases:    []string{"settime", "settimeleft", "settimeremaining", "timeleft", "timeremaining"},
 	argsFormat: "[Xm]Ys",
@@ -275,7 +278,7 @@ var setTimeLeft = &Command{
 	},
 }
 
-var registerPubkey = &Command{
+var RegisterPubkey = &Command{
 	name:       "register",
 	aliases:    []string{},
 	argsFormat: "[name] <pubkey>",
