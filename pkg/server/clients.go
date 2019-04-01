@@ -18,6 +18,12 @@ type Clients struct {
 	byPeer map[*enet.Peer]*Client
 }
 
+func newClients() *Clients {
+	return &Clients{
+		byPeer: map[*enet.Peer]*Client{},
+	}
+}
+
 // Links an ENet peer to a client object. If no unused client object can be found, a new one is created and added to the global set of clients.
 func (clients *Clients) add(peer *enet.Peer) *Client {
 	// re-use unused client object with low cn

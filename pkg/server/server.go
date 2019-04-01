@@ -62,12 +62,11 @@ func New(config Config, authManager *auth.Manager, cmds ...*Command) (*Server, <
 	callbacks := make(chan func())
 
 	s := &Server{
-
 		config:      config,
 		clients:     &Clients{},
 		relay:       relay.New(),
 		authManager: authManager,
-		mapRotation: maprot.NewRotation(config.MapPools),
+		mapRotation: maprot.New(config.MapPools),
 		callbacks:   callbacks,
 	}
 	s.commands = NewCommands(s, cmds...)
@@ -133,7 +132,7 @@ func (s *Server) Role(cn uint32) role.ID {
 	return s.clients.clientByCN(cn).Role
 }
 
-func (s *Server) GameDuration() time.Duration { return s.config.GameDuration }
+func (s *Server) GameDuration() time.Duration { return time.Duration(s.config.GameDuration) }
 
 func (s *Server) authRequiredBecause(c *Client) disconnectreason.ID {
 	if s.NumPlayers() >= s.MaxPlayers() {
@@ -423,7 +422,7 @@ func (s *Server) Intermission() {
 
 	s.clients.Broadcast(nmc.ServerMessage, "next up: "+nextMap)
 
-	if s.reportStats && s.NumPlayers() > 0 {
+	if s.reportStats && s.NumPlayers() > 0 && s.statsServer != nil {
 		s.reportEndgameStats()
 	}
 }
@@ -436,7 +435,7 @@ func (s *Server) reportEndgameStats() {
 		}
 	})
 
-	s.statsServer.Send("stats %d %s %s", s.gameMode.ID(), s.Map, strings.Join(stats, " "))
+	s.statsServer.Send("stats %d %s %s", s.gameMode.ID(), s.mapname, strings.Join(stats, " "))
 }
 
 func (s *Server) HandleSuccStats(reqID uint32) {
@@ -479,7 +478,7 @@ func (s *Server) changeMap(mode gamemode.ID, mapname string) {
 	s.gameMode = s.newGame(mode)
 
 	s.ForEach(s.gameMode.Join)
-	s.clients.Broadcast(nmc.MapChange, s.Map, s.gameMode.ID(), s.gameMode.NeedMapInfo())
+	s.clients.Broadcast(nmc.MapChange, s.mapname, s.gameMode.ID(), s.gameMode.NeedMapInfo())
 	s.gameMode.Start()
 
 	s.clients.ForEach(func(c *Client) {

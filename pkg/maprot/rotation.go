@@ -19,7 +19,7 @@ type Rotation struct {
 	rng   *rand.Rand
 }
 
-func NewRotation(pools Pools) *Rotation {
+func New(pools Pools) *Rotation {
 	return &Rotation{
 		pools: pools,
 		rng:   rand.New(rand.NewSource(time.Now().UnixNano())),
