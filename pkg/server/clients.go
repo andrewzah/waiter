@@ -122,7 +122,7 @@ func (s *Server) SendWelcome(c *Client) {
 		p = append(p, nmc.PauseGame, 1, -1)
 	}
 
-	if teamMode, ok := s.GameMode.(game.TeamMode); ok {
+	if teamMode, ok := s.GameMode.(game.Teamed); ok {
 		p = append(p, nmc.TeamInfo)
 		teamMode.ForEach(func(t *game.Team) {
 			if t.Frags > 0 {

@@ -274,14 +274,14 @@ func (i *infoServer) teamScores(respHeader []byte) protocol.Packet {
 		ExtInfoVersion,
 	}
 
-	teamMode, isTeamMode := s.GameMode.(game.TeamMode)
+	teamMode, isTeamMode := s.GameMode.(game.Teamed)
 	if isTeamMode {
 		q = append(q, ExtInfoNoError)
 	} else {
 		q = append(q, ExtInfoError)
 	}
 
-	timedMode, isTimedMode := s.GameMode.(game.TimedMode)
+	timedMode, isTimedMode := s.GameMode.(game.Timed)
 	timeLeft := 0 * time.Second
 	if isTimedMode {
 		timeLeft = timedMode.TimeLeft()

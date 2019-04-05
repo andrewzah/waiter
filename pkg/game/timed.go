@@ -7,32 +7,41 @@ import (
 )
 
 type TimedMode interface {
+	Timed
 	Mode
+}
+
+type Timed interface {
+	Start()
 	Pause(*Player)
 	Paused() bool
 	Resume(*Player)
+	End()
 	Ended() bool
+	CleanUp()
 	TimeLeft() time.Duration
 	SetTimeLeft(time.Duration)
 }
 
-type timedMode struct {
+type timed struct {
 	t *Timer
 	s Server
 }
 
-func newTimedMode(s Server) timedMode {
-	return timedMode{
+var _ Timed = &timed{}
+
+func NewTimedMode(s Server) Timed {
+	return &timed{
 		s: s,
 	}
 }
 
-func (tm *timedMode) Start() {
+func (tm *timed) Start() {
 	tm.t = StartTimer(tm.s.GameDuration(), tm.s.Intermission)
 	tm.s.Broadcast(nmc.TimeLeft, tm.s.GameDuration())
 }
 
-func (tm *timedMode) Pause(p *Player) {
+func (tm *timed) Pause(p *Player) {
 	cn := -1
 	if p != nil {
 		cn = int(p.CN)
@@ -41,11 +50,11 @@ func (tm *timedMode) Pause(p *Player) {
 	tm.t.Pause()
 }
 
-func (tm *timedMode) Paused() bool {
+func (tm *timed) Paused() bool {
 	return tm.t.Paused()
 }
 
-func (tm *timedMode) Resume(p *Player) {
+func (tm *timed) Resume(p *Player) {
 	cn := -1
 	if p != nil {
 		cn = int(p.CN)
@@ -54,27 +63,27 @@ func (tm *timedMode) Resume(p *Player) {
 	tm.t.Resume()
 }
 
-func (tm *timedMode) End() {
+func (tm *timed) End() {
 	tm.s.Broadcast(nmc.TimeLeft, 0)
 	tm.t.Stop()
 }
 
-func (tm *timedMode) Ended() bool {
+func (tm *timed) Ended() bool {
 	return tm.t.Stopped()
 }
 
-func (tm *timedMode) CleanUp() {
+func (tm *timed) CleanUp() {
 	if tm.Paused() {
 		tm.Resume(nil)
 	}
 	tm.t.Stop()
 }
 
-func (tm *timedMode) TimeLeft() time.Duration {
+func (tm *timed) TimeLeft() time.Duration {
 	return tm.t.TimeLeft
 }
 
-func (tm *timedMode) SetTimeLeft(d time.Duration) {
+func (tm *timed) SetTimeLeft(d time.Duration) {
 	tm.t.TimeLeft = d
 	tm.s.Broadcast(nmc.TimeLeft, d)
 }

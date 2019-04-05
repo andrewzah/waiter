@@ -61,26 +61,32 @@ func (t *Team) Remove(p *Player) {
 	delete(t.Players, p)
 }
 
-type TeamMode interface {
+type TeamedMode interface {
+	Teamed
 	Mode
+}
+
+type Teamed interface {
 	Teams() map[string]*Team
 	ForEach(func(*Team))
 	ChangeTeam(*Player, string, bool)
 }
 
-type teamMode struct {
+type teamed struct {
 	s                 Server
 	teams             map[string]*Team
 	otherTeamsAllowed bool
 	keepTeams         bool
 }
 
-func newTeamMode(s Server, otherTeamsAllowed, keepTeams bool, names ...string) teamMode {
+var _ Teamed = &teamed{}
+
+func newTeamedMode(s Server, otherTeamsAllowed, keepTeams bool, names ...string) teamed {
 	teams := map[string]*Team{}
 	for _, name := range names {
 		teams[name] = NewTeam(name)
 	}
-	return teamMode{
+	return teamed{
 		s:                 s,
 		teams:             teams,
 		otherTeamsAllowed: otherTeamsAllowed,
@@ -88,7 +94,7 @@ func newTeamMode(s Server, otherTeamsAllowed, keepTeams bool, names ...string) t
 	}
 }
 
-func (tm *teamMode) selectTeam(p *Player) *Team {
+func (tm *teamed) selectTeam(p *Player) *Team {
 	if tm.keepTeams {
 		for _, t := range tm.teams {
 			if p.Team.Name == t.Name {
@@ -99,7 +105,7 @@ func (tm *teamMode) selectTeam(p *Player) *Team {
 	return tm.selectWeakestTeam()
 }
 
-func (tm *teamMode) selectWeakestTeam() *Team {
+func (tm *teamed) selectWeakestTeam() *Team {
 	teams := []*Team{}
 	for _, team := range tm.teams {
 		teams = append(teams, team)
@@ -109,17 +115,17 @@ func (tm *teamMode) selectWeakestTeam() *Team {
 	return teams[0]
 }
 
-func (tm *teamMode) Join(p *Player) {
+func (tm *teamed) Join(p *Player) {
 	team := tm.selectTeam(p)
 	team.Add(p)
 	tm.s.Broadcast(nmc.SetTeam, p.CN, p.Team.Name, -1)
 }
 
-func (*teamMode) Leave(p *Player) {
+func (*teamed) Leave(p *Player) {
 	p.Team.Remove(p)
 }
 
-func (tm *teamMode) HandleFrag(fragger, victim *Player) {
+func (tm *teamed) HandleFrag(fragger, victim *Player) {
 	victim.Die()
 	if fragger.Team == victim.Team {
 		fragger.Frags--
@@ -129,17 +135,17 @@ func (tm *teamMode) HandleFrag(fragger, victim *Player) {
 	tm.s.Broadcast(nmc.Died, victim.CN, fragger.CN, fragger.Frags, fragger.Team.Frags)
 }
 
-func (tm *teamMode) ForEach(do func(t *Team)) {
+func (tm *teamed) ForEach(do func(t *Team)) {
 	for _, team := range tm.teams {
 		do(team)
 	}
 }
 
-func (tm *teamMode) Teams() map[string]*Team {
+func (tm *teamed) Teams() map[string]*Team {
 	return tm.teams
 }
 
-func (tm *teamMode) ChangeTeam(p *Player, newTeamName string, forced bool) {
+func (tm *teamed) ChangeTeam(p *Player, newTeamName string, forced bool) {
 	reason := -1 // = none = silent
 	if p.State != playerstate.Spectator {
 		if forced {

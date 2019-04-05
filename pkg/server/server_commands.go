@@ -170,7 +170,7 @@ var ToggleCompetitiveMode = &ServerCommand{
 			if err != nil || (val != 0 && val != 1) {
 				return
 			}
-			comp, active := s.GameMode.(*game.Competitive)
+			comp, active := s.GameMode.(game.Competitive)
 			changed = s.CompetitiveMode != (val == 1)
 			switch val {
 			case 1:

@@ -208,7 +208,9 @@ func (s *Server) ConfirmSpawn(client *Client, lifeSequence, _weapon int32) {
 
 	client.Packets.Publish(nmc.ConfirmSpawn, client.ToWire())
 
-	s.GameMode.ConfirmSpawn(&client.Player)
+	if comp, ok := s.GameMode.(game.Competitive); ok {
+		comp.ConfirmSpawn(&client.Player)
+	}
 }
 
 func (s *Server) Disconnect(client *Client, reason disconnectreason.ID) {

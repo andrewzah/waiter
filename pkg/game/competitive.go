@@ -8,28 +8,88 @@ import (
 	"github.com/sauerbraten/waiter/pkg/protocol/playerstate"
 )
 
-type Competitive struct {
+type CompetitiveMode interface {
+	Competitive
+	Mode
+}
+
+type Competitive interface {
+	ConfirmSpawn(*Player)
+	ToCasual() TimedMode
+}
+
+type competitiveMode struct {
+	competitivelyTimed
+	Mode
+}
+
+var (
+	_ Mode            = &competitiveMode{}
+	_ TimedMode       = &competitiveMode{}
+	_ CompetitiveMode = &competitiveMode{}
+)
+
+func NewCompetitiveMode(s Server, m func(Timed) TimedMode) CompetitiveMode {
+	t := newCompetitivelyTimed(s)
+	return &competitiveMode{
+		competitivelyTimed: t,
+		Mode:               m(&t),
+	}
+}
+
+func (c *competitiveMode) ConfirmSpawn(p *Player) {
+	if _, ok := c.mapLoadPending[p]; ok {
+		delete(c.mapLoadPending, p)
+		if len(c.mapLoadPending) == 0 {
+			c.s.Broadcast(nmc.ServerMessage, "all players spawned, starting game")
+			c.Resume(nil)
+		}
+	}
+}
+
+func (c *competitiveMode) ToCasual() TimedMode {
+	return struct {
+		Timed
+		Mode
+	}{
+		Timed: c.competitivelyTimed.Timed,
+		Mode:  c.Mode,
+	}
+}
+
+func (c *competitiveMode) Leave(p *Player) {
+	c.Mode.Leave(p)
+	if p.State != playerstate.Spectator && !c.competitivelyTimed.Ended() {
+		c.s.Broadcast(nmc.ServerMessage, "a player left the game")
+		if !c.Paused() {
+			c.Pause(nil)
+		} else if len(c.pendingResumeActions) > 0 {
+			// a resume is pending, cancel it
+			c.Resume(nil)
+		}
+	}
+}
+
+type competitivelyTimed struct {
 	s Server
-	TimedMode
+	Timed
 	started              bool
 	mapLoadPending       map[*Player]struct{}
 	pendingResumeActions []*time.Timer
 }
 
-func NewCompetitive(s Server, mode TimedMode) *Competitive {
-	return &Competitive{
+var _ Timed = &competitivelyTimed{}
+
+func newCompetitivelyTimed(s Server) competitivelyTimed {
+	return competitivelyTimed{
 		s:              s,
-		TimedMode:      mode,
+		Timed:          NewTimedMode(s),
 		mapLoadPending: map[*Player]struct{}{},
 	}
 }
 
-func (c *Competitive) ToCasual() TimedMode {
-	return c.TimedMode
-}
-
-func (c *Competitive) Start() {
-	c.TimedMode.Start()
+func (c *competitivelyTimed) Start() {
+	c.Timed.Start()
 	c.s.ForEach(func(p *Player) {
 		if p.State != playerstate.Spectator {
 			c.mapLoadPending[p] = struct{}{}
@@ -41,7 +101,7 @@ func (c *Competitive) Start() {
 	}
 }
 
-func (c *Competitive) Resume(p *Player) {
+func (c *competitivelyTimed) Resume(p *Player) {
 	if len(c.pendingResumeActions) > 0 {
 		for _, action := range c.pendingResumeActions {
 			if action != nil {
@@ -61,44 +121,20 @@ func (c *Competitive) Resume(p *Player) {
 		time.AfterFunc(1*time.Second, func() { c.s.Broadcast(nmc.ServerMessage, "resuming game in 2 seconds") }),
 		time.AfterFunc(2*time.Second, func() { c.s.Broadcast(nmc.ServerMessage, "resuming game in 1 second") }),
 		time.AfterFunc(3*time.Second, func() {
-			c.TimedMode.Resume(p)
+			c.Timed.Resume(p)
 			c.pendingResumeActions = nil
 		}),
 	}
 }
 
-func (g *Competitive) ConfirmSpawn(p *Player) {
-	g.TimedMode.ConfirmSpawn(p)
-	if _, ok := g.mapLoadPending[p]; ok {
-		delete(g.mapLoadPending, p)
-		if len(g.mapLoadPending) == 0 {
-			g.s.Broadcast(nmc.ServerMessage, "all players spawned, starting game")
-			g.Resume(nil)
-		}
-	}
-}
-
-func (g *Competitive) Leave(p *Player) {
-	g.TimedMode.Leave(p)
-	if p.State != playerstate.Spectator && !g.TimedMode.Ended() {
-		g.s.Broadcast(nmc.ServerMessage, "a player left the game")
-		if !g.Paused() {
-			g.Pause(nil)
-		} else if len(g.pendingResumeActions) > 0 {
-			// a resume is pending, cancel it
-			g.Resume(nil)
-		}
-	}
-}
-
-func (g *Competitive) CleanUp() {
-	if len(g.pendingResumeActions) > 0 {
-		for _, action := range g.pendingResumeActions {
+func (c *competitivelyTimed) CleanUp() {
+	if len(c.pendingResumeActions) > 0 {
+		for _, action := range c.pendingResumeActions {
 			if action != nil {
 				action.Stop()
 			}
 		}
-		g.pendingResumeActions = nil
+		c.pendingResumeActions = nil
 	}
-	g.TimedMode.CleanUp()
+	c.Timed.CleanUp()
 }
